@@ -1,0 +1,150 @@
+---
+title: "Assignment 4"
+author: "Carlos Echeverri"
+date: "2/28/2018"
+output: pdf_document
+---
+
+####Section 10.5
+
+*Problem 5: What does tibble::enframe() do? When might you use it?*
+
+By typing *?enframe*, we can see the help section that tells us that using enframe "converts named atomic vectors or lists to two-column data frames". This may be useful if we already have several vectors containing an observation with their associated value and we want to bind them together in a tibble.
+
+
+####Section 12.6.1
+
+*Problem 3: I claimed that iso2 and iso3 were redundant with country. Confirm this claim.*
+
+By typing *?tidyr::who*, we can see the description of the variables used in the data set, note that iso2 and iso3 are described as being "2 & 3 letter ISO country codes". For this reason, we can safely drop them since they are redundant with the variable that we are already using with the full country name.
+
+*Problem 4: For each country, year, and sex compute the total number of cases of TB. Make an informative visualisation of the data.*
+
+```{r}
+library(foreign)
+library(stringr)
+library(plyr)
+library(reshape2)
+suppressMessages(library("tidyverse"))
+```
+
+
+```{r}
+# Use the code provided in R for Data Science to tidy the who data set
+
+who_tidy <- who %>%
+  gather(code, value, new_sp_m014:newrel_f65, na.rm = TRUE) %>% 
+  mutate(code = stringr::str_replace(code, "newrel", "new_rel")) %>%
+  separate(code, c("new", "var", "sexage")) %>% 
+  select(-new, -iso2, -iso3) %>% 
+  separate(sexage, c("sex", "age"), sep = 1)
+
+# Group the data by country, create a new column that counts the number of cases
+# for each of the countries. Group again by country, year and sex. Since there are many
+# countries in the data set, we focus on those with the highest count of cases in order
+# to be able to get more information out of the plot. We create a plot for each sex and
+# give each country a different color.
+
+who_tidy %>%
+  group_by(country) %>%
+  mutate(by_country = sum(value)) %>%
+  group_by(country, year, sex) %>%
+  filter(by_country > 900000, year > 1995 ) %>%
+  count(wt = value) %>%
+  ggplot(aes(year, n, color = country)) +
+  geom_line() +
+  facet_wrap(~ sex)
+```
+
+####Using tidyverse to clean up tables
+
+*Table 4 -> Table 6*
+
+```{r}
+# Load data for table 4
+
+pew <- read.spss("pew.sav")
+pew <- as.data.frame(pew)
+
+tab4 <- pew[c("q16", "reltrad", "income")]
+tab4$reltrad <- as.character(tab4$reltrad)
+tab4$reltrad <- str_replace(tab4$reltrad, " Churches", "")
+tab4$reltrad <- str_replace(tab4$reltrad, " Protestant", " Prot")
+tab4$reltrad[tab4$q16 == " Atheist (do not believe in God) "] <- "Atheist"
+tab4$reltrad[tab4$q16 == " Agnostic (not sure if there is a God) "] <- "Agnostic"
+tab4$reltrad <- str_trim(tab4$reltrad)
+tab4$reltrad <- str_replace_all(tab4$reltrad, " \\(.*?\\)", "")
+
+tab4$income <- c("Less than $10,000" = "<$10k", 
+                 "10 to under $20,000" = "$10-20k", 
+                 "20 to under $30,000" = "$20-30k", 
+                 "30 to under $40,000" = "$30-40k", 
+                 "40 to under $50,000" = "$40-50k", 
+                 "50 to under $75,000" = "$50-75k",
+                 "75 to under $100,000" = "$75-100k", 
+                 "100 to under $150,000" = "$100-150k", 
+                 "$150,000 or more" = ">150k", 
+                 "Don't know/Refused (VOL)" = "Don't know/refused")[tab4$income]
+
+tab4$income <- factor(tab4$income, levels = c("<$10k", "$10-20k", "$20-30k", "$30-40k",
+                                              "$40-50k", "$50-75k", 
+                                              "$75-100k", "$100-150k",
+                                              ">150k", "Don't know/refused"))
+
+counts <- plyr::count(tab4, c("reltrad", "income"))
+names(counts)[1] <- "religion"
+tab4 <- dcast(counts, religion ~ income)
+tab4 <- as.tibble(tab4)
+
+knitr::kable(head(tab4[1:7], n=10))
+```
+
+
+
+```{r}
+#Tidy tab4 by gathering all levels of income and arranging by religion and save as tab6
+
+tab6 <- tab4 %>% gather(key = "income", value = "freq", -religion) %>% 
+  arrange(religion)
+
+knitr::kable(head(tab6, n=10))
+```
+
+*Table 7 -> Table 8*
+
+```{r}
+# Load billboard data and create table 7
+
+bb <- read_csv("billboard.csv")
+
+tab7 <- bb %>% select(-genre, -date.peaked) %>% 
+  dplyr::rename(artist = artist.inverted) %>% 
+  arrange(artist, track) %>% mutate(track = stringr::str_trunc(track, 23, "right"))
+
+for(i in 6:81) {
+  names(tab7)[i] <- paste("wk", i-5, sep = "")
+}
+
+tab7$artist[6] <- "98^0"
+
+knitr::kable(head(tab7[1:7], n=8))
+```
+
+```{r}
+# Tidy data by removing all unnecesary columns and gathering weeks in a single variable.
+# Break the week column in order to keep only the number of the week. Create a formula
+# that uses the date entered column and the week number in order to keep track of the
+# current week.
+
+tab8 <- bb %>% gather(key="week", value = "rank", -year, -artist.inverted,
+                      -track, -time, -genre, -date.entered, -date.peaked) %>% 
+select(year, artist=artist.inverted, time, track, date = date.entered, week, rank ) %>%
+  arrange(track) %>% filter(!is.na(rank)) %>% separate(week, into=c("A", "B", "C"),
+                                                       sep=c(1, -7), convert=TRUE) %>% 
+  select(-A, -C) %>% dplyr::rename(week = B) %>% arrange(artist, track) %>% 
+  mutate(date = date + (week-1)*7 ) %>% mutate(rank = as.integer(rank)) %>% 
+  mutate(track = stringr::str_trunc(track, 23, "right"))
+
+knitr::kable(head(tab8, n=15))
+```
+
